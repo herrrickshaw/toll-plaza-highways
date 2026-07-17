@@ -22,9 +22,20 @@ python toll_plaza_visualization.py && python update_toll_visualization.py
 ```
 
 ## Data dependency
-The toll↔retail distance analysis consumes fuel-outlet data from
-[`fuel-retail-outlets`](https://github.com/herrrickshaw/fuel-retail-outlets)
-(SSRI/BPCL outlet feeds). Point the scripts at that data, or re-run its extractors.
+`toll_plaza_dashboard.py` / `toll_plaza_visualization.py` / `update_toll_visualization.py`
+are self-contained: they parse NHAI toll-plaza PDFs and write their own
+`toll_plazas_cleaned.csv` locally — no read from `fuel-retail-outlets` at
+runtime.
+
+The toll↔retail distance analysis (`TOLL_RETAIL_DISTANCE_ANALYSIS_SUMMARY.md`,
+`TOLL_RETAIL_INTEGRATION_SUMMARY.md`) is different: it's a one-time manual
+cross-reference against outlet data produced by
+[`fuel-retail-outlets`](https://github.com/herrrickshaw/fuel-retail-outlets)'s
+`extract_ssri_complete_107k.py` (SSRI/BPCL feeds) — that script and its output
+live in the other repo, not here. To reproduce the distance analysis: run
+`extract_ssri_complete_107k.py` in `fuel-retail-outlets` first, then join its
+output against `toll_plazas_cleaned.csv` by coordinates (no committed script
+does this join automatically yet).
 
 ## Related repos
 - [`fuel-retail-outlets`](https://github.com/herrrickshaw/fuel-retail-outlets) — fuel outlet data & maps
