@@ -45,7 +45,7 @@ class TollPlazaDashboard:
         print(f"✓ Loaded {len(self.payments)} payment records")
         print(f"  Date range: {self.payments['date'].min()} to {self.payments['date'].max()}")
         print(f"  Unique plazas: {self.payments['plaza_name'].nunique()}")
-        print(f"  Total collections: ₹{self.payments['amount'].sum():.2f} Cr")
+        print(f"  Total collections: ₹{self.payments['amount'].sum() / 1e7:.2f} Cr")  # amounts are rupees
 
         self._calculate_metrics()
 
@@ -505,7 +505,7 @@ def create_sample_payment_data(plazas_df, output_path='sample_payment_data.csv')
                 # Generate realistic amount
                 base_amount = np.random.uniform(20, 100)  # ₹ lakhs
                 daily_variation = np.random.uniform(0.7, 1.3)
-                amount = base_amount * daily_variation
+                amount = base_amount * daily_variation * 1e5  # rupees, the unit the report/dashboard assume
 
                 records.append({
                     'plaza_name': plaza_name,

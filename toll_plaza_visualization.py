@@ -48,61 +48,53 @@ class TollPlazaVisualization:
         self.plazas_df = self.plazas_df.dropna(how='all')
         self.plazas_df = self.plazas_df.dropna(axis=1, how='all')
 
-        # Identify key columns by content analysis
-        plaza_names = []
-        states = []
-        highways = []
+        indian_states = [
+            'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
+            'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
+            'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya',
+            'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim',
+            'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand',
+            'West Bengal', 'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Puducherry', 'Chandigarh'
+        ]
+        state_lc = {s.lower(): s for s in indian_states}
+        nh_re = re.compile(r'\bNH[-\s]?\d+', re.IGNORECASE)
 
-        for idx, row in self.plazas_df.iterrows():
-            # Look for state names (known states in India)
-            indian_states = [
-                'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
-                'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
-                'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya',
-                'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim',
-                'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand',
-                'West Bengal', 'Delhi', 'Jammu and Kashmir'
-            ]
+        def is_plaza_text(v):
+            return 'toll' in v.lower() or 'plaza' in v.lower()
 
-            state = None
-            plaza_name = None
-
-            for val in row:
-                if val:
-                    val_str = str(val).strip()
-                    if any(s in val_str for s in indian_states):
-                        state = val_str
-                    elif 'Toll Plaza' in val_str or 'toll' in val_str.lower():
-                        plaza_name = val_str
-
-        # Create structured dataframe
         structured_data = []
         for idx, row in self.plazas_df.iterrows():
             row_dict = {}
-            row_list = [str(x).strip() for x in row if pd.notna(x)]
+            row_list = [str(x).strip() for x in row if pd.notna(x) and str(x).strip()]
 
-            # Extract components
-            for val in row_list:
-                if any(state in val for state in ['Gujarat', 'Maharashtra', 'Rajasthan',
-                                                    'Haryana', 'Tamil Nadu', 'Karnataka',
-                                                    'Andhra Pradesh', 'Telangana', 'Punjab',
-                                                    'Uttar Pradesh', 'Delhi', 'Himachal Pradesh',
-                                                    'Madhya Pradesh', 'West Bengal']):
-                    row_dict['state'] = val
-                elif 'NH-' in val or 'NH' in val:
-                    row_dict['highway'] = val
-
-            # Get plaza name (usually contains "Toll Plaza" or "toll")
-            plaza_candidates = [v for v in row_list if 'toll' in v.lower() or 'plaza' in v.lower()]
-            if plaza_candidates:
-                row_dict['plaza_name'] = plaza_candidates[0]
+            # State: a cell that IS a state name wins; otherwise a non-plaza cell containing one.
+            exact = [state_lc[v.lower()] for v in row_list if v.lower() in state_lc]
+            if exact:
+                row_dict['state'] = exact[0]
             else:
-                row_dict['plaza_name'] = row_list[0] if row_list else f"Unknown_Plaza_{idx}"
+                for v in row_list:
+                    if not is_plaza_text(v) and any(st in v for st in indian_states):
+                        row_dict['state'] = v
+                        break
+
+            highways = [v for v in row_list if nh_re.search(v) and not is_plaza_text(v)]
+            if highways:
+                row_dict['highway'] = highways[0]
+
+            # Plaza name: a cell mentioning toll/plaza, else the first descriptive cell
+            # (not a serial number, the state or the highway).
+            plaza_candidates = [v for v in row_list if is_plaza_text(v)]
+            if not plaza_candidates:
+                plaza_candidates = [v for v in row_list
+                                    if not re.fullmatch(r'[\d.\s]+', v)
+                                    and v != row_dict.get('state') and v != row_dict.get('highway')]
+            row_dict['plaza_name'] = plaza_candidates[0] if plaza_candidates else f"Unknown_Plaza_{idx}"
 
             row_dict['raw_data'] = ' | '.join(row_list)
             structured_data.append(row_dict)
 
-        self.plazas_df = pd.DataFrame(structured_data)
+        self.plazas_df = pd.DataFrame(structured_data).reindex(
+            columns=['plaza_name', 'state', 'highway', 'raw_data'])
 
         # Remove duplicates based on plaza name
         self.plazas_df = self.plazas_df.drop_duplicates(subset=['plaza_name'], keep='first')
