@@ -6,84 +6,23 @@ Interactive Toll Plaza Dashboard with Payment Data Analysis
 - Interactive controls for date range and metrics
 """
 
-import pandas as pd
-import numpy as np
+from __future__ import annotations
+
 import json
-from pathlib import Path
-from datetime import datetime, timedelta
 import warnings
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+
+from toll_config import CRORE, DOWNLOADS_DIR, LAKH, PLAZAS_CSV, SAMPLE_PAYMENTS_CSV
 
 warnings.filterwarnings('ignore')
 
 
-class TollPlazaDashboard:
-    def __init__(self, plaza_data_path, payment_data_path=None):
-        """
-        Initialize dashboard with toll plaza and payment data.
-
-        Args:
-            plaza_data_path: Path to cleaned toll plaza CSV
-            payment_data_path: Path to payment data CSV (optional)
-        """
-        self.plazas = pd.read_csv(plaza_data_path)
-        self.payments = None
-        self.metrics = None
-
-        if payment_data_path:
-            self.load_payment_data(payment_data_path)
-
-    def load_payment_data(self, csv_path):
-        """
-        Load payment data from CSV.
-        Expected columns: plaza_name, date, amount, vehicle_count (optional)
-        """
-        self.payments = pd.read_csv(csv_path)
-        self.payments['date'] = pd.to_datetime(self.payments['date'])
-        self.payments['month'] = self.payments['date'].dt.strftime('%Y-%m')
-        self.payments['day'] = self.payments['date'].dt.date
-
-        print(f"✓ Loaded {len(self.payments)} payment records")
-        print(f"  Date range: {self.payments['date'].min()} to {self.payments['date'].max()}")
-        print(f"  Unique plazas: {self.payments['plaza_name'].nunique()}")
-        print(f"  Total collections: ₹{self.payments['amount'].sum():.2f} Cr")
-
-        self._calculate_metrics()
-
-    def _calculate_metrics(self):
-        """Calculate key metrics from payment data"""
-        if self.payments is None:
-            return
-
-        self.metrics = {
-            'total_collections': self.payments['amount'].sum(),
-            'avg_daily_collection': self.payments.groupby('day')['amount'].sum().mean(),
-            'avg_plaza_revenue': self.payments.groupby('plaza_name')['amount'].sum().mean(),
-            'monthly_breakdown': self.payments.groupby('month')['amount'].sum().to_dict(),
-            'state_breakdown': self._get_state_breakdown(),
-            'top_plazas': self._get_top_plazas(10),
-            'collection_volatility': self.payments.groupby('plaza_name')['amount'].std()
-        }
-
-    def _get_state_breakdown(self):
-        """Get collections breakdown by state"""
-        state_data = self.payments.merge(
-            self.plazas[['plaza_name', 'state']],
-            on='plaza_name',
-            how='left'
-        )
-        return state_data.groupby('state')['amount'].sum().to_dict()
-
-    def _get_top_plazas(self, n=10):
-        """Get top N plazas by total collections"""
-        return self.payments.groupby('plaza_name')['amount'].sum().nlargest(n).to_dict()
-
-    def create_interactive_dashboard(self, output_path='toll_dashboard.html'):
-        """Create interactive HTML dashboard"""
-        if self.payments is None:
-            print("Error: No payment data loaded. Cannot create dashboard.")
-            return
-
-        html_content = f"""
+def render_dashboard_html(metrics, n_active_plazas, generated_at):
+    """Render the dashboard HTML (pure function: metrics dict in, HTML str out)."""
+    return f"""
         <!DOCTYPE html>
         <html>
         <head>
@@ -218,19 +157,19 @@ class TollPlazaDashboard:
                 <div class="kpi-grid">
                     <div class="kpi-card">
                         <div class="kpi-label">Total Collections</div>
-                        <div class="kpi-value">₹{self.metrics['total_collections']/10000000:.2f} Cr</div>
+                        <div class="kpi-value">₹{metrics['total_collections']/CRORE:.2f} Cr</div>
                     </div>
                     <div class="kpi-card">
                         <div class="kpi-label">Average Daily</div>
-                        <div class="kpi-value">₹{self.metrics['avg_daily_collection']/100000:.2f} L</div>
+                        <div class="kpi-value">₹{metrics['avg_daily_collection']/LAKH:.2f} L</div>
                     </div>
                     <div class="kpi-card">
                         <div class="kpi-label">Avg Plaza Revenue</div>
-                        <div class="kpi-value">₹{self.metrics['avg_plaza_revenue']/100000:.2f} L</div>
+                        <div class="kpi-value">₹{metrics['avg_plaza_revenue']/LAKH:.2f} L</div>
                     </div>
                     <div class="kpi-card">
                         <div class="kpi-label">Active Plazas</div>
-                        <div class="kpi-value">{self.payments['plaza_name'].nunique()}</div>
+                        <div class="kpi-value">{n_active_plazas}</div>
                     </div>
                 </div>
 
@@ -269,14 +208,14 @@ class TollPlazaDashboard:
                 </div>
 
                 <div class="footer">
-                    <p>📊 Dashboard generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p>📊 Dashboard generated on {generated_at.strftime('%Y-%m-%d %H:%M:%S')}</p>
                     <p>Data source: National Highway Authority of India (NHAI)</p>
                 </div>
             </div>
 
             <script>
                 // Monthly trend chart
-                const monthlyData = {json.dumps(self.metrics['monthly_breakdown'])};
+                const monthlyData = {json.dumps(metrics['monthly_breakdown'])};
                 const months = Object.keys(monthlyData).sort();
                 const monthlyValues = months.map(m => monthlyData[m]/100000);
 
@@ -312,7 +251,7 @@ class TollPlazaDashboard:
                 }});
 
                 // Top plazas chart
-                const topPlazas = {json.dumps(self.metrics['top_plazas'])};
+                const topPlazas = {json.dumps(metrics['top_plazas'])};
                 const plazaNames = Object.keys(topPlazas);
                 const plazaValues = Object.values(topPlazas).map(v => v/100000);
 
@@ -345,7 +284,7 @@ class TollPlazaDashboard:
                 }});
 
                 // State breakdown chart
-                const stateData = {json.dumps(self.metrics['state_breakdown'])};
+                const stateData = {json.dumps(metrics['state_breakdown'])};
                 const stateNames = Object.keys(stateData).slice(0, 15);
                 const stateValues = stateNames.map(s => stateData[s]/100000);
 
@@ -375,7 +314,7 @@ class TollPlazaDashboard:
 
                 // Populate top plazas table
                 const tableBody = document.getElementById('topPlazasTable');
-                const totalCollections = {self.metrics['total_collections']};
+                const totalCollections = {metrics['total_collections']};
                 let rank = 1;
                 plazaNames.forEach((name, idx) => {{
                     const amount = plazaValues[idx];
@@ -396,6 +335,141 @@ class TollPlazaDashboard:
         </body>
         </html>
         """
+
+
+def build_text_report(plazas, payments, metrics, generated_at):
+    """Build the plain-text analysis report (pure function; amounts in rupees)."""
+    report = f"""
+{'='*80}
+TOLL PLAZA TRAFFIC & COLLECTION ANALYSIS REPORT
+{'='*80}
+
+EXECUTIVE SUMMARY
+{'-'*80}
+Report Generated: {generated_at.strftime('%Y-%m-%d %H:%M:%S')}
+Total Collections: ₹{metrics['total_collections']/CRORE:.2f} Crore
+Average Daily Collection: ₹{metrics['avg_daily_collection']/LAKH:.2f} Lakhs
+Average Plaza Revenue: ₹{metrics['avg_plaza_revenue']/LAKH:.2f} Lakhs
+Active Toll Plazas: {payments['plaza_name'].nunique()}
+Date Range: {payments['date'].min().date()} to {payments['date'].max().date()}
+
+KEY METRICS
+{'-'*80}
+Total Toll Plazas in Network: {len(plazas)}
+States with Toll Infrastructure: {plazas['state'].nunique()}
+Data Points Analyzed: {len(payments):,}
+
+TOP 15 PERFORMING TOLL PLAZAS
+{'-'*80}
+"""
+    top_15 = payments.groupby('plaza_name')['amount'].sum().nlargest(15)
+    total_collections = metrics['total_collections']
+
+    for rank, (plaza, amount) in enumerate(top_15.items(), 1):
+        percentage = (amount / total_collections) * 100
+        state = plazas[plazas['plaza_name'] == plaza]['state'].values[0] if len(
+            plazas[plazas['plaza_name'] == plaza]) > 0 else 'Unknown'
+        report += f"{rank:2d}. {str(plaza):40s} | {str(state):20s} | ₹{amount/LAKH:8.2f}L ({percentage:5.2f}%)\n"
+
+    report += f"\n{'='*80}\n"
+    report += "COLLECTIONS BY STATE\n"
+    report += f"{'-'*80}\n"
+
+    state_breakdown = sorted(metrics['state_breakdown'].items(), key=lambda x: x[1], reverse=True)
+    for state, amount in state_breakdown[:15]:
+        percentage = (amount / total_collections) * 100
+        report += f"{state:25s}: ₹{amount/LAKH:10.2f}L ({percentage:5.2f}%)\n"
+
+    report += f"\n{'='*80}\n"
+    report += "MONTHLY TRENDS\n"
+    report += f"{'-'*80}\n"
+    report += f"{'Month':<12} | {'Collections (L)':>15} | {'Change %':>10}\n"
+    report += f"{'-'*80}\n"
+
+    months = sorted(metrics['monthly_breakdown'].items())
+    prev_amount = None
+    for month, amount in months:
+        if prev_amount:
+            change = ((amount - prev_amount) / prev_amount) * 100
+        else:
+            change = 0
+        report += f"{month}  | ₹{amount/LAKH:13.2f} | {change:+9.2f}%\n"
+        prev_amount = amount
+
+    report += f"\n{'='*80}\n"
+    return report
+
+
+class TollPlazaDashboard:
+    def __init__(self, plaza_data_path, payment_data_path=None):
+        """
+        Initialize dashboard with toll plaza and payment data.
+
+        Args:
+            plaza_data_path: Path to cleaned toll plaza CSV
+            payment_data_path: Path to payment data CSV (optional)
+        """
+        self.plazas = pd.read_csv(plaza_data_path)
+        self.payments = None
+        self.metrics = None
+
+        if payment_data_path:
+            self.load_payment_data(payment_data_path)
+
+    def load_payment_data(self, csv_path):
+        """
+        Load payment data from CSV.
+        Expected columns: plaza_name, date, amount, vehicle_count (optional)
+        """
+        self.payments = pd.read_csv(csv_path)
+        self.payments['date'] = pd.to_datetime(self.payments['date'])
+        self.payments['month'] = self.payments['date'].dt.strftime('%Y-%m')
+        self.payments['day'] = self.payments['date'].dt.date
+
+        print(f"✓ Loaded {len(self.payments)} payment records")
+        print(f"  Date range: {self.payments['date'].min()} to {self.payments['date'].max()}")
+        print(f"  Unique plazas: {self.payments['plaza_name'].nunique()}")
+        print(f"  Total collections: ₹{self.payments['amount'].sum():.2f} Cr")
+
+        self._calculate_metrics()
+
+    def _calculate_metrics(self):
+        """Calculate key metrics from payment data"""
+        if self.payments is None:
+            return
+
+        self.metrics = {
+            'total_collections': self.payments['amount'].sum(),
+            'avg_daily_collection': self.payments.groupby('day')['amount'].sum().mean(),
+            'avg_plaza_revenue': self.payments.groupby('plaza_name')['amount'].sum().mean(),
+            'monthly_breakdown': self.payments.groupby('month')['amount'].sum().to_dict(),
+            'state_breakdown': self._get_state_breakdown(),
+            'top_plazas': self._get_top_plazas(10),
+            'collection_volatility': self.payments.groupby('plaza_name')['amount'].std()
+        }
+
+    def _get_state_breakdown(self):
+        """Get collections breakdown by state"""
+        state_data = self.payments.merge(
+            self.plazas[['plaza_name', 'state']],
+            on='plaza_name',
+            how='left'
+        )
+        return state_data.groupby('state')['amount'].sum().to_dict()
+
+    def _get_top_plazas(self, n=10):
+        """Get top N plazas by total collections"""
+        return self.payments.groupby('plaza_name')['amount'].sum().nlargest(n).to_dict()
+
+    def create_interactive_dashboard(self, output_path='toll_dashboard.html'):
+        """Create interactive HTML dashboard"""
+        if self.payments is None:
+            print("Error: No payment data loaded. Cannot create dashboard.")
+            return
+
+        html_content = render_dashboard_html(
+            self.metrics, self.payments['plaza_name'].nunique(), datetime.now()
+        )
 
         with open(output_path, 'w') as f:
             f.write(html_content)
@@ -423,64 +497,9 @@ class TollPlazaDashboard:
 
     def generate_text_report(self, output_path='toll_analysis_report.txt'):
         """Generate comprehensive text report"""
-        report = f"""
-{'='*80}
-TOLL PLAZA TRAFFIC & COLLECTION ANALYSIS REPORT
-{'='*80}
-
-EXECUTIVE SUMMARY
-{'-'*80}
-Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Total Collections: ₹{self.metrics['total_collections']/10000000:.2f} Crore
-Average Daily Collection: ₹{self.metrics['avg_daily_collection']/100000:.2f} Lakhs
-Average Plaza Revenue: ₹{self.metrics['avg_plaza_revenue']/100000:.2f} Lakhs
-Active Toll Plazas: {self.payments['plaza_name'].nunique()}
-Date Range: {self.payments['date'].min().date()} to {self.payments['date'].max().date()}
-
-KEY METRICS
-{'-'*80}
-Total Toll Plazas in Network: {len(self.plazas)}
-States with Toll Infrastructure: {self.plazas['state'].nunique()}
-Data Points Analyzed: {len(self.payments):,}
-
-TOP 15 PERFORMING TOLL PLAZAS
-{'-'*80}
-"""
-        top_15 = self.payments.groupby('plaza_name')['amount'].sum().nlargest(15)
-        total_collections = self.metrics['total_collections']
-
-        for rank, (plaza, amount) in enumerate(top_15.items(), 1):
-            percentage = (amount / total_collections) * 100
-            state = self.plazas[self.plazas['plaza_name'] == plaza]['state'].values[0] if len(
-                self.plazas[self.plazas['plaza_name'] == plaza]) > 0 else 'Unknown'
-            report += f"{rank:2d}. {str(plaza):40s} | {str(state):20s} | ₹{amount/100000:8.2f}L ({percentage:5.2f}%)\n"
-
-        report += f"\n{'='*80}\n"
-        report += "COLLECTIONS BY STATE\n"
-        report += f"{'-'*80}\n"
-
-        state_breakdown = sorted(self.metrics['state_breakdown'].items(), key=lambda x: x[1], reverse=True)
-        for state, amount in state_breakdown[:15]:
-            percentage = (amount / total_collections) * 100
-            report += f"{state:25s}: ₹{amount/100000:10.2f}L ({percentage:5.2f}%)\n"
-
-        report += f"\n{'='*80}\n"
-        report += "MONTHLY TRENDS\n"
-        report += f"{'-'*80}\n"
-        report += f"{'Month':<12} | {'Collections (L)':>15} | {'Change %':>10}\n"
-        report += f"{'-'*80}\n"
-
-        months = sorted(self.metrics['monthly_breakdown'].items())
-        prev_amount = None
-        for month, amount in months:
-            if prev_amount:
-                change = ((amount - prev_amount) / prev_amount) * 100
-            else:
-                change = 0
-            report += f"{month}  | ₹{amount/100000:13.2f} | {change:+9.2f}%\n"
-            prev_amount = amount
-
-        report += f"\n{'='*80}\n"
+        report = build_text_report(
+            self.plazas, self.payments, self.metrics, datetime.now()
+        )
 
         with open(output_path, 'w') as f:
             f.write(report)
@@ -520,28 +539,30 @@ def create_sample_payment_data(plazas_df, output_path='sample_payment_data.csv')
     return df
 
 
-if __name__ == '__main__':
+def main():
+    """CLI entry: generate sample payments, then the dashboard, metrics and report."""
     print("Toll Plaza Dashboard Setup\n")
 
     # Create sample payment data
-    plazas_df = pd.read_csv('/Users/umashankar/Downloads/toll_plazas_cleaned.csv')
-    payment_data_path = create_sample_payment_data(plazas_df, '/Users/umashankar/Downloads/sample_payment_data.csv')
+    plazas_df = pd.read_csv(PLAZAS_CSV)
+    create_sample_payment_data(plazas_df, str(SAMPLE_PAYMENTS_CSV))
 
     # Initialize dashboard
     print("\nInitializing dashboard...")
-    dashboard = TollPlazaDashboard(
-        '/Users/umashankar/Downloads/toll_plazas_cleaned.csv',
-        '/Users/umashankar/Downloads/sample_payment_data.csv'
-    )
+    dashboard = TollPlazaDashboard(str(PLAZAS_CSV), str(SAMPLE_PAYMENTS_CSV))
 
     # Generate outputs
     print("\nGenerating visualizations and reports...")
-    dashboard.create_interactive_dashboard('/Users/umashankar/Downloads/toll_dashboard.html')
-    dashboard.export_metrics_json('/Users/umashankar/Downloads/toll_metrics.json')
-    dashboard.generate_text_report('/Users/umashankar/Downloads/toll_analysis_report.txt')
+    dashboard.create_interactive_dashboard(str(DOWNLOADS_DIR / 'toll_dashboard.html'))
+    dashboard.export_metrics_json(str(DOWNLOADS_DIR / 'toll_metrics.json'))
+    dashboard.generate_text_report(str(DOWNLOADS_DIR / 'toll_analysis_report.txt'))
 
     print("\n✅ Dashboard setup complete!")
     print("\nGenerated files:")
     print("  📊 toll_dashboard.html - Interactive metrics dashboard")
     print("  📈 toll_metrics.json - Machine-readable metrics")
     print("  📄 toll_analysis_report.txt - Detailed text report")
+
+
+if __name__ == '__main__':
+    main()
