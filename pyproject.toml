@@ -1,0 +1,23 @@
+[project]
+name = "toll-plaza-highways"
+version = "0.1.0"
+description = "Toll-plaza visualisation and dashboard scripts for Indian highways"
+requires-python = ">=3.9"
+
+dependencies = ["pandas", "numpy", "pdfplumber", "folium", "geopy"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+extend-exclude = ["notebooks", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
