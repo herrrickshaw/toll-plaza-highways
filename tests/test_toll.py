@@ -126,3 +126,11 @@ def test_cli_help_smoke(capsys):
             sys.argv = old
     assert e.value.code == 0
     assert '--data' in capsys.readouterr().out
+
+
+def test_render_dashboard_html_golden_hash(dashboard):
+    """Pins the full HTML byte-for-byte (hash captured before the template split)."""
+    import hashlib
+    html = dash.render_dashboard_html(dashboard.metrics, 2, datetime(2024, 3, 1))
+    assert hashlib.sha256(html.encode('utf-8')).hexdigest() == (
+        '58757b15143d87fb9f374a3ddc27292391a82d3aafd0aa42573b1446d8513763')
