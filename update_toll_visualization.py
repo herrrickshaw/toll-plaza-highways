@@ -4,21 +4,32 @@ Utility script to update toll plaza visualizations with new payment data
 Usage: python3 update_toll_visualization.py --data your_payment_data.csv
 """
 
+from __future__ import annotations
+
 import argparse
-import pandas as pd
-import json
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+
+from toll_config import CRORE, HOME_DIR, LAKH
 from toll_plaza_dashboard import TollPlazaDashboard
+
+REQUIRED_PAYMENT_COLUMNS = ['plaza_name', 'date', 'amount']
+ARCHIVED_FILES = ['toll_dashboard.html', 'toll_metrics.json', 'toll_analysis_report.txt']
+
+
+def resolve_output_dir(output_dir):
+    """Return the output directory under the home directory (legacy layout)."""
+    return Path(f'{HOME_DIR}/{output_dir}')
 
 
 def validate_payment_data(csv_path):
     """Validate that payment data has required columns"""
     try:
         df = pd.read_csv(csv_path)
-        required_columns = ['plaza_name', 'date', 'amount']
-
-        missing = [col for col in required_columns if col not in df.columns]
+        missing = [col for col in REQUIRED_PAYMENT_COLUMNS if col not in df.columns]
         if missing:
             print(f"❌ Error: Missing required columns: {', '.join(missing)}")
             print(f"✓ Available columns: {', '.join(df.columns)}")
@@ -28,7 +39,7 @@ def validate_payment_data(csv_path):
         try:
             df['date'] = pd.to_datetime(df['date'])
             df['amount'] = pd.to_numeric(df['amount'])
-            print(f"✓ Data validation passed")
+            print("✓ Data validation passed")
             print(f"  - Records: {len(df):,}")
             print(f"  - Date range: {df['date'].min().date()} to {df['date'].max().date()}")
             print(f"  - Unique plazas: {df['plaza_name'].nunique()}")
@@ -55,7 +66,7 @@ def update_visualizations(payment_data_path, output_dir='Downloads', verbose=Tru
         return False
 
     print("\nStep 2: Initializing dashboard...")
-    plaza_data = f'/Users/umashankar/{output_dir}/toll_plazas_cleaned.csv'
+    plaza_data = f'{resolve_output_dir(output_dir)}/toll_plazas_cleaned.csv'
 
     if not Path(plaza_data).exists():
         print(f"❌ Error: Plaza data not found at {plaza_data}")
@@ -68,7 +79,7 @@ def update_visualizations(payment_data_path, output_dir='Downloads', verbose=Tru
         return False
 
     print("\nStep 3: Generating updated visualizations...")
-    output_path = f'/Users/umashankar/{output_dir}'
+    output_path = str(resolve_output_dir(output_dir))
 
     try:
         # Generate outputs
@@ -76,20 +87,20 @@ def update_visualizations(payment_data_path, output_dir='Downloads', verbose=Tru
         metrics_json = f'{output_path}/toll_metrics_updated.json'
         report_txt = f'{output_path}/toll_analysis_report_updated.txt'
 
-        print(f"  • Creating interactive dashboard...")
+        print("  • Creating interactive dashboard...")
         dashboard.create_interactive_dashboard(dashboard_html)
 
-        print(f"  • Exporting metrics...")
+        print("  • Exporting metrics...")
         dashboard.export_metrics_json(metrics_json)
 
-        print(f"  • Generating text report...")
+        print("  • Generating text report...")
         dashboard.generate_text_report(report_txt)
 
         # Generate summary statistics
-        print(f"\nStep 4: Computing summary statistics...")
+        print("\nStep 4: Computing summary statistics...")
         stats = {
             'update_timestamp': datetime.now().isoformat(),
-            'total_collections_crores': dashboard.metrics['total_collections'] / 10000000,
+            'total_collections_crores': dashboard.metrics['total_collections'] / CRORE,
             'data_records': len(dashboard.payments),
             'active_plazas': dashboard.payments['plaza_name'].nunique(),
             'date_range': {
@@ -108,9 +119,9 @@ def update_visualizations(payment_data_path, output_dir='Downloads', verbose=Tru
         print(f"Data Records: {stats['data_records']:,}")
         print(f"Active Plazas: {stats['active_plazas']}")
         print(f"Date Range: {stats['date_range']['start']} to {stats['date_range']['end']}")
-        print(f"\nTop 3 Performing Plazas:")
+        print("\nTop 3 Performing Plazas:")
         for i, (plaza, amount) in enumerate(stats['top_3_plazas'], 1):
-            print(f"  {i}. {plaza}: ₹{amount/100000:.2f} Lakhs")
+            print(f"  {i}. {plaza}: ₹{amount/LAKH:.2f} Lakhs")
 
         print(f"\n{'='*70}")
         print("✅ VISUALIZATIONS UPDATED SUCCESSFULLY!")
@@ -133,18 +144,12 @@ def update_visualizations(payment_data_path, output_dir='Downloads', verbose=Tru
 
 def archive_previous_versions(output_dir='Downloads'):
     """Archive previous visualization versions"""
-    output_path = Path(f'/Users/umashankar/{output_dir}')
+    output_path = resolve_output_dir(output_dir)
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-    files_to_archive = [
-        'toll_dashboard.html',
-        'toll_metrics.json',
-        'toll_analysis_report.txt'
-    ]
 
     print(f"\nArchiving previous versions with timestamp {timestamp}...")
 
-    for filename in files_to_archive:
+    for filename in ARCHIVED_FILES:
         source = output_path / filename
         if source.exists():
             archive_name = source.stem + f'_backup_{timestamp}' + source.suffix
@@ -203,6 +208,5 @@ def main():
 
 
 if __name__ == '__main__':
-    import sys
     success = main()
     sys.exit(0 if success else 1)

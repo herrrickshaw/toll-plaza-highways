@@ -7,13 +7,80 @@ Toll Plaza Traffic & Collection Visualization System
 - Visualizes traffic movement across major toll booths
 """
 
-import pandas as pd
-import numpy as np
-import pdfplumber
-import json
-from pathlib import Path
+from __future__ import annotations
+
+import logging
+import subprocess
 from datetime import datetime, timedelta
-import re
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pdfplumber
+
+from toll_config import DOWNLOADS_DIR, PLAZAS_CSV, SOURCE_PDFS
+
+logger = logging.getLogger(__name__)
+
+# States recognised when structuring the raw PDF rows (subset of all Indian states).
+STATE_NAMES = [
+    'Gujarat', 'Maharashtra', 'Rajasthan', 'Haryana', 'Tamil Nadu', 'Karnataka',
+    'Andhra Pradesh', 'Telangana', 'Punjab', 'Uttar Pradesh', 'Delhi',
+    'Himachal Pradesh', 'Madhya Pradesh', 'West Bengal',
+]
+
+# Approximate state centroids (lat, lon) used as placeholder coordinates.
+STATE_COORDS = {
+    'Gujarat': (22.3, 72.6),
+    'Maharashtra': (19.76, 75.71),
+    'Rajasthan': (27.0, 74.2),
+    'Haryana': (29.0, 77.0),
+    'Tamil Nadu': (11.1, 79.8),
+    'Karnataka': (15.3, 75.9),
+    'Andhra Pradesh': (15.9, 78.5),
+    'Telangana': (17.4, 78.5),
+    'Punjab': (31.5, 74.8),
+    'Uttar Pradesh': (26.8, 80.6),
+    'Delhi': (28.6, 77.2),
+    'Himachal Pradesh': (32.2, 77.2),
+    'Madhya Pradesh': (22.9, 78.6),
+    'West Bengal': (24.2, 88.4),
+}
+
+DEFAULT_MAP_CENTER = (23.6345, 85.2988)  # centre of India
+
+
+def _import_folium():
+    """Import folium, pip-installing it on first use (legacy behaviour); returns the module."""
+    try:
+        import folium
+    except ImportError:
+        print("Installing folium...")
+        subprocess.run(['pip', 'install', 'folium', '-q'])
+        import folium
+    return folium
+
+
+def assign_sample_coordinates(plazas_df):
+    """Add jittered state-centroid latitude/longitude columns (placeholder, not real geocoding)."""
+    lats = []
+    lons = []
+    for _, row in plazas_df.iterrows():
+        state = row.get('state', 'Unknown')
+        if state in STATE_COORDS:
+            lat, lon = STATE_COORDS[state]
+            # Add some randomness
+            lat += np.random.uniform(-0.5, 0.5)
+            lon += np.random.uniform(-0.5, 0.5)
+            lats.append(lat)
+            lons.append(lon)
+        else:
+            lats.append(None)
+            lons.append(None)
+
+    plazas_df['latitude'] = lats
+    plazas_df['longitude'] = lons
+    return lats
 
 class TollPlazaVisualization:
     def __init__(self):
@@ -32,7 +99,6 @@ class TollPlazaVisualization:
                     tables = page.extract_tables()
                     if tables:
                         for table in tables:
-                            headers = table[0]
                             for row in table[1:]:
                                 if row and any(row):
                                     all_records.append(row)
@@ -48,33 +114,6 @@ class TollPlazaVisualization:
         self.plazas_df = self.plazas_df.dropna(how='all')
         self.plazas_df = self.plazas_df.dropna(axis=1, how='all')
 
-        # Identify key columns by content analysis
-        plaza_names = []
-        states = []
-        highways = []
-
-        for idx, row in self.plazas_df.iterrows():
-            # Look for state names (known states in India)
-            indian_states = [
-                'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
-                'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
-                'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya',
-                'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim',
-                'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand',
-                'West Bengal', 'Delhi', 'Jammu and Kashmir'
-            ]
-
-            state = None
-            plaza_name = None
-
-            for val in row:
-                if val:
-                    val_str = str(val).strip()
-                    if any(s in val_str for s in indian_states):
-                        state = val_str
-                    elif 'Toll Plaza' in val_str or 'toll' in val_str.lower():
-                        plaza_name = val_str
-
         # Create structured dataframe
         structured_data = []
         for idx, row in self.plazas_df.iterrows():
@@ -83,11 +122,7 @@ class TollPlazaVisualization:
 
             # Extract components
             for val in row_list:
-                if any(state in val for state in ['Gujarat', 'Maharashtra', 'Rajasthan',
-                                                    'Haryana', 'Tamil Nadu', 'Karnataka',
-                                                    'Andhra Pradesh', 'Telangana', 'Punjab',
-                                                    'Uttar Pradesh', 'Delhi', 'Himachal Pradesh',
-                                                    'Madhya Pradesh', 'West Bengal']):
+                if any(state in val for state in STATE_NAMES):
                     row_dict['state'] = val
                 elif 'NH-' in val or 'NH' in val:
                     row_dict['highway'] = val
@@ -149,7 +184,8 @@ class TollPlazaVisualization:
                 else:
                     lats.append(None)
                     lons.append(None)
-            except:
+            except Exception as exc:
+                logger.warning("Geocoding failed for %r: %s", row.get('plaza_name'), exc)
                 lats.append(None)
                 lons.append(None)
 
@@ -168,15 +204,8 @@ class TollPlazaVisualization:
             print("Error: Plazas must be extracted and geocoded first")
             return None
 
-        try:
-            import folium
-            from folium.plugins import HeatMap, MarkerCluster
-        except ImportError:
-            print("Installing folium...")
-            import subprocess
-            subprocess.run(['pip', 'install', 'folium', '-q'])
-            import folium
-            from folium.plugins import HeatMap, MarkerCluster
+        folium = _import_folium()
+        from folium.plugins import MarkerCluster
 
         # Calculate center of India
         valid_plazas = self.plazas_df.dropna(subset=['latitude', 'longitude'])
@@ -185,7 +214,7 @@ class TollPlazaVisualization:
             center_lon = valid_plazas['longitude'].mean()
         else:
             # Default to center of India
-            center_lat, center_lon = 23.6345, 85.2988
+            center_lat, center_lon = DEFAULT_MAP_CENTER
 
         # Create base map
         m = folium.Map(
@@ -222,15 +251,8 @@ class TollPlazaVisualization:
             payment_data: DataFrame with columns [plaza_name, date, amount, latitude, longitude]
                          If None, generates sample data for demonstration
         """
-        try:
-            import folium
-            from folium.plugins import HeatMap
-        except ImportError:
-            print("Installing folium...")
-            import subprocess
-            subprocess.run(['pip', 'install', 'folium', '-q'])
-            import folium
-            from folium.plugins import HeatMap
+        folium = _import_folium()
+        from folium.plugins import HeatMap
 
         if payment_data is None:
             # Generate sample payment data for demonstration
@@ -347,11 +369,7 @@ class TollPlazaVisualization:
 
 def main():
     """Main execution"""
-    pdf_paths = [
-        '/Users/umashankar/Downloads/NH-Fee-Plazas-1.pdf',
-        '/Users/umashankar/Downloads/NH-Toll-Plaza-.pdf',
-        '/Users/umashankar/Downloads/NHAI-toll-list.pdf'
-    ]
+    pdf_paths = [str(p) for p in SOURCE_PDFS]
 
     viz = TollPlazaVisualization()
 
@@ -360,7 +378,7 @@ def main():
     plazas = viz.extract_toll_plazas_from_pdf(pdf_paths)
 
     # Step 2: Save cleaned data
-    plazas.to_csv('/Users/umashankar/Downloads/toll_plazas_cleaned.csv', index=False)
+    plazas.to_csv(str(PLAZAS_CSV), index=False)
     print("✓ Cleaned data saved to: toll_plazas_cleaned.csv")
 
     # Step 3: Geocode plazas (optional - slower)
@@ -368,54 +386,21 @@ def main():
     print("(Skipping live geocoding - using sample coordinates instead)")
 
     # Add sample coordinates for testing
-    state_coords = {
-        'Gujarat': (22.3, 72.6),
-        'Maharashtra': (19.76, 75.71),
-        'Rajasthan': (27.0, 74.2),
-        'Haryana': (29.0, 77.0),
-        'Tamil Nadu': (11.1, 79.8),
-        'Karnataka': (15.3, 75.9),
-        'Andhra Pradesh': (15.9, 78.5),
-        'Telangana': (17.4, 78.5),
-        'Punjab': (31.5, 74.8),
-        'Uttar Pradesh': (26.8, 80.6),
-        'Delhi': (28.6, 77.2),
-        'Himachal Pradesh': (32.2, 77.2),
-        'Madhya Pradesh': (22.9, 78.6),
-        'West Bengal': (24.2, 88.4),
-    }
-
-    lats = []
-    lons = []
-    for idx, row in viz.plazas_df.iterrows():
-        state = row.get('state', 'Unknown')
-        if state in state_coords:
-            lat, lon = state_coords[state]
-            # Add some randomness
-            lat += np.random.uniform(-0.5, 0.5)
-            lon += np.random.uniform(-0.5, 0.5)
-            lats.append(lat)
-            lons.append(lon)
-        else:
-            lats.append(None)
-            lons.append(None)
-
-    viz.plazas_df['latitude'] = lats
-    viz.plazas_df['longitude'] = lons
-    print(f"✓ Added sample coordinates for {len([l for l in lats if l is not None])}/{len(lats)} plazas")
+    lats = assign_sample_coordinates(viz.plazas_df)
+    print(f"✓ Added sample coordinates for {sum(lat is not None for lat in lats)}/{len(lats)} plazas")
 
     # Step 4: Create visualizations
     print("\nStep 3: Creating interactive maps...")
 
     # Base map
-    viz.create_base_map('/Users/umashankar/Downloads/toll_plazas_map.html')
+    viz.create_base_map(str(DOWNLOADS_DIR / 'toll_plazas_map.html'))
 
     # Heat map with sample data
-    viz.create_heat_map(output_html='/Users/umashankar/Downloads/toll_collections_heatmap.html')
+    viz.create_heat_map(output_html=str(DOWNLOADS_DIR / 'toll_collections_heatmap.html'))
 
     # Step 5: Generate report
     print("\nStep 4: Generating summary report...")
-    report = viz.generate_report()
+    viz.generate_report()
 
     print("\n✅ Visualization complete!")
     print("\nGenerated files:")
